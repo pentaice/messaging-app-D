@@ -38,4 +38,10 @@ config.js
 # Firebase config dosyaları
 src/services/firebase.js
 src/services/firebaseService.js
-*firebase*.js 
+*firebase*.js
+
+# Node modüllerindeki gizli dosyalar
+node_modules/**/crux-manager/crux-manager.js
+
+# Google API Key içeren dosyalar
+src/services/firebase.js 
