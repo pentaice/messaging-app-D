@@ -21,11 +21,13 @@ import { StatusBar } from 'expo-status-bar';
 import { ChatContext } from '../context/ChatContext';
 import { AuthContext } from '../context/AuthContext';
 import { formatTimestamp, getFileType, formatFileSize } from '../utils/helpers';
+import Message from '../components/Message';
+import { Video } from 'expo-av';
 
 const ChatScreen = ({ route, navigation }) => {
   const { conversationId } = route.params;
-  const { currentUser } = useContext(AuthContext);
-  const { messages, sendMessage, deleteMessage, activeChat, setActiveChat } = useContext(ChatContext);
+  const { currentUser, loading: authLoading } = useContext(AuthContext);
+  const { messages, sendMessage, deleteMessage, activeChat, setActiveChat, conversations, socket } = useContext(ChatContext);
   const [inputMessage, setInputMessage] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState(null);
@@ -33,15 +35,45 @@ const ChatScreen = ({ route, navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const flatListRef = useRef(null);
 
+  const currentConversation = conversations.find(conv => conv.id === conversationId);
+  const otherParticipantId = currentConversation?.participants.find(userCode => userCode !== currentUser?.userCode);
+  
+  const otherParticipantDetails = (currentConversation?.participantDetails && otherParticipantId) ? currentConversation.participantDetails[otherParticipantId] : 
+                                (currentConversation?.participants || []).find(p => p === otherParticipantId || p.userCode === otherParticipantId);
+
+  const otherUserName = currentConversation?.userName || otherParticipantDetails?.name || otherParticipantDetails?.userCode || otherParticipantId || 'Bilinmeyen Kullanıcı';
+
   useEffect(() => {
     if (conversationId) {
       setActiveChat(conversationId);
-      return () => setActiveChat(null);
+      navigation.setOptions({
+        title: `Kullanıcı: ${otherUserName}`,
+      });
+      
+      if (socket && conversationId) {
+        socket.emit('joinConversation', conversationId);
+        console.log(`Odaya katılma isteği gönderildi: ${conversationId}`);
+        socket.emit('getMessages', { conversationId: conversationId });
+        console.log(`Mesajlar isteniyor: ${conversationId}`);
+      }
+
+      return () => {
+        setActiveChat(null);
+      };
     } else {
       Alert.alert('Hata', 'Sohbet bilgisi bulunamadı');
       navigation.goBack();
     }
-  }, [conversationId]);
+  }, [conversationId, conversations, currentUser, otherUserName, navigation, socket]);
+
+  if (authLoading || !currentUser || !conversations) {
+     return (
+       <View style={styles.loadingContainer}>
+         <ActivityIndicator size="large" color="#6C63FF" />
+         <Text style={styles.loadingText}>Yükleniyor...</Text>
+       </View>
+     );
+  }
 
   const handleSend = async () => {
     if (inputMessage.trim()) {
@@ -127,8 +159,32 @@ const ChatScreen = ({ route, navigation }) => {
     setShowAttachmentModal(false);
   };
 
+  const filteredMessages = React.useMemo(() => {
+    console.log('Tüm mesajlar:', messages);
+    if (!Array.isArray(messages)) {
+      console.error('Mesajlar bir dizi değil:', messages);
+      return [];
+    }
+    const filtered = messages.filter(message => {
+      console.log('Mesaj kontrol ediliyor:', message);
+      return message && message.conversationId === conversationId;
+    });
+    console.log('Filtrelenmiş mesajlar:', filtered);
+    return filtered.sort((a, b) => {
+      const dateA = new Date(a.timestamp || 0);
+      const dateB = new Date(b.timestamp || 0);
+      return dateA - dateB;
+    });
+  }, [messages, conversationId]);
+
   const renderMessage = ({ item }) => {
-    const isOwnMessage = item.senderId === currentUser.uid;
+    console.log('Mesaj render ediliyor:', item);
+    if (!item) {
+      console.error('Geçersiz mesaj:', item);
+      return null;
+    }
+
+    const isOwnMessage = item.senderUserCode === currentUser?.userCode;
 
     return (
       <View style={[
@@ -140,6 +196,7 @@ const ChatScreen = ({ route, navigation }) => {
             source={{ uri: item.fileUrl }}
             style={styles.messageImage}
             resizeMode="cover"
+            tintColor={styles.messageImage.tintColor}
           />
         )}
         
@@ -157,10 +214,15 @@ const ChatScreen = ({ route, navigation }) => {
         )}
         
         {item.type === 'text' && (
-          <Text style={styles.messageText}>{item.content}</Text>
+          <Text style={[
+            styles.messageText,
+            isOwnMessage ? styles.ownMessageText : styles.otherMessageText
+          ]}>
+            {item.content}
+          </Text>
         )}
-        
-        <Text style={styles.timestamp}>
+
+        <Text style={styles.messageTime}>
           {formatTimestamp(item.timestamp)}
         </Text>
       </View>
@@ -168,8 +230,8 @@ const ChatScreen = ({ route, navigation }) => {
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
+    <KeyboardAvoidingView
+      style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
@@ -177,16 +239,17 @@ const ChatScreen = ({ route, navigation }) => {
       
       <FlatList
         ref={flatListRef}
-        data={messages}
+        data={filteredMessages}
         renderItem={renderMessage}
         keyExtractor={item => item.id}
-        contentContainerStyle={styles.messagesList}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+        contentContainerStyle={styles.messageList}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
       />
 
       <View style={styles.inputContainer}>
-        <TouchableOpacity 
-          style={styles.attachButton}
+        <TouchableOpacity
+          style={styles.attachmentButton}
           onPress={() => setShowAttachmentModal(true)}
         >
           <Ionicons name="add-circle-outline" size={24} color="#6C63FF" />
@@ -194,33 +257,36 @@ const ChatScreen = ({ route, navigation }) => {
 
         <TextInput
           style={styles.input}
-          placeholder="Mesajınızı yazın..."
-          placeholderTextColor="#888888"
           value={inputMessage}
           onChangeText={setInputMessage}
+          placeholder="Mesajınızı yazın..."
+          placeholderTextColor="#666"
           multiline
         />
 
-        {inputMessage.trim() ? (
-          <TouchableOpacity 
-            style={styles.sendButton} 
-            onPress={handleSend}
+        {isRecording ? (
+          <TouchableOpacity
+            style={styles.recordButton}
+            onPress={stopRecording}
           >
-            <Ionicons name="send" size={24} color="#6C63FF" />
+            <Ionicons name="stop" size={24} color="#FF4444" />
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={styles.micButton}
-            onPressIn={startRecording}
-            onPressOut={stopRecording}
+            style={styles.recordButton}
+            onPress={startRecording}
           >
-            <Ionicons 
-              name={isRecording ? "radio-button-on" : "mic-outline"} 
-              size={24} 
-              color={isRecording ? "#FF4444" : "#6C63FF"} 
-            />
+            <Ionicons name="mic" size={24} color="#6C63FF" />
           </TouchableOpacity>
         )}
+
+        <TouchableOpacity
+          style={[styles.sendButton, !inputMessage.trim() && styles.sendButtonDisabled]}
+          onPress={handleSend}
+          disabled={!inputMessage.trim() || isLoading}
+        >
+          <Ionicons name="send" size={24} color={inputMessage.trim() ? "#6C63FF" : "#666"} />
+        </TouchableOpacity>
       </View>
 
       <Modal
@@ -231,30 +297,20 @@ const ChatScreen = ({ route, navigation }) => {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <TouchableOpacity 
-              style={styles.modalOption}
+            <TouchableOpacity
+              style={styles.modalButton}
               onPress={handleImagePick}
             >
-              <Ionicons name="image-outline" size={32} color="#6C63FF" />
-              <Text style={styles.modalOptionText}>Galeri</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.modalOption}
-              onPress={() => {
-                // Kamera fonksiyonu eklenecek
-                setShowAttachmentModal(false);
-              }}
-            >
-              <Ionicons name="camera-outline" size={32} color="#6C63FF" />
-              <Text style={styles.modalOptionText}>Kamera</Text>
+              <Ionicons name="image" size={24} color="#6C63FF" />
+              <Text style={styles.modalButtonText}>Resim/Video</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.modalCloseButton}
+              style={styles.modalButton}
               onPress={() => setShowAttachmentModal(false)}
             >
-              <Text style={styles.modalCloseText}>İptal</Text>
+              <Ionicons name="close" size={24} color="#FF4444" />
+              <Text style={styles.modalButtonText}>İptal</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -274,32 +330,36 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#121212',
   },
-  messagesList: {
-    padding: 15,
+  messageList: {
+    padding: 10,
   },
   messageContainer: {
     maxWidth: '80%',
     marginVertical: 5,
-    padding: 12,
+    padding: 10,
     borderRadius: 15,
   },
   ownMessage: {
     alignSelf: 'flex-end',
     backgroundColor: '#6C63FF',
-    borderBottomRightRadius: 5,
   },
   otherMessage: {
     alignSelf: 'flex-start',
     backgroundColor: '#2A2A2A',
-    borderBottomLeftRadius: 5,
   },
   messageText: {
     color: '#FFFFFF',
     fontSize: 16,
   },
-  timestamp: {
-    color: 'rgba(255, 255, 255, 0.6)',
+  ownMessageText: {
+    color: '#FFFFFF',
+  },
+  otherMessageText: {
+    color: '#FFFFFF',
+  },
+  messageTime: {
     fontSize: 12,
+    color: '#999',
     marginTop: 5,
     alignSelf: 'flex-end',
   },
@@ -307,94 +367,86 @@ const styles = StyleSheet.create({
     width: 200,
     height: 200,
     borderRadius: 10,
-    marginBottom: 5,
   },
   videoContainer: {
     width: 200,
     height: 200,
-    backgroundColor: '#000000',
+    backgroundColor: '#000',
     borderRadius: 10,
-    marginBottom: 5,
     justifyContent: 'center',
     alignItems: 'center',
   },
   audioContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     padding: 10,
-    borderRadius: 20,
-    width: 150,
   },
   audioProgressBar: {
     flex: 1,
-    height: 3,
+    height: 2,
     backgroundColor: '#FFFFFF',
     marginLeft: 10,
-    borderRadius: 2,
   },
   inputContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
     padding: 10,
     backgroundColor: '#1E1E1E',
-  },
-  attachButton: {
-    padding: 10,
+    alignItems: 'center',
   },
   input: {
     flex: 1,
     backgroundColor: '#2A2A2A',
     borderRadius: 20,
     paddingHorizontal: 15,
-    paddingVertical: 10,
+    paddingVertical: 8,
     marginHorizontal: 10,
     color: '#FFFFFF',
     maxHeight: 100,
   },
   sendButton: {
-    padding: 10,
+    padding: 8,
   },
-  micButton: {
-    padding: 10,
+  sendButtonDisabled: {
+    opacity: 0.5,
+  },
+  recordButton: {
+    padding: 8,
+  },
+  attachmentButton: {
+    padding: 8,
   },
   modalContainer: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
     backgroundColor: '#1E1E1E',
-    padding: 20,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    padding: 20,
   },
-  modalOption: {
+  modalButton: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#2A2A2A',
   },
-  modalOptionText: {
+  modalButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    marginLeft: 15,
-  },
-  modalCloseButton: {
-    alignItems: 'center',
-    padding: 15,
-    marginTop: 10,
-  },
-  modalCloseText: {
-    color: '#FF4444',
+    marginLeft: 10,
     fontSize: 16,
   },
   loadingContainer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#121212',
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    marginTop: 10,
   },
 });
 

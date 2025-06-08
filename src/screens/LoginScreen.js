@@ -16,13 +16,13 @@ import { AuthContext } from '../context/AuthContext';
 const { width } = Dimensions.get('window');
 
 const LoginScreen = () => {
-  const { login } = useContext(AuthContext);
+  const { anonymousLogin } = useContext(AuthContext);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
     try {
       setLoading(true);
-      await login();
+      await anonymousLogin();
     } catch (error) {
       console.error('Login error:', error);
       Alert.alert('Hata', 'Giriş yapılırken bir hata oluştu.');

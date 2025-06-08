@@ -4,26 +4,23 @@ import { CodedError } from 'expo-modules-core';
 import ExpoFontLoader from './ExpoFontLoader';
 import { FontResource, FontSource, FontDisplay } from './Font.types';
 
-function uriFromFontSource(asset: FontSource): string | number | null {
+function uriFromFontSource(asset: any): string | null {
   if (typeof asset === 'string') {
     return asset || null;
+  } else if (typeof asset === 'object') {
+    return asset.uri || asset.localUri || asset.default || null;
   } else if (typeof asset === 'number') {
     return uriFromFontSource(Asset.fromModule(asset));
-  } else if (typeof asset === 'object' && typeof asset.uri === 'number') {
-    return uriFromFontSource(asset.uri);
-  } else if (typeof asset === 'object') {
-    return asset.uri || (asset as Asset).localUri || (asset as FontResource).default || null;
   }
-
   return null;
 }
 
-function displayFromFontSource(asset: FontSource): FontDisplay {
-  if (typeof asset === 'object' && 'display' in asset) {
-    return asset.display || FontDisplay.AUTO;
-  }
+function displayFromFontSource(asset: any): FontDisplay | undefined {
+  return asset.display || FontDisplay.AUTO;
+}
 
-  return FontDisplay.AUTO;
+export function fontFamilyNeedsScoping(name: string): boolean {
+  return false;
 }
 
 export function getAssetForSource(source: FontSource): Asset | FontResource {
@@ -35,7 +32,7 @@ export function getAssetForSource(source: FontSource): Asset | FontResource {
   }
 
   return {
-    uri,
+    uri: uri!,
     display,
   };
 }
@@ -62,4 +59,8 @@ export function loadSingleFontAsync(name: string, input: Asset | FontResource): 
   }
 
   return Promise.resolve();
+}
+
+export function getNativeFontName(name: string): string {
+  return name;
 }

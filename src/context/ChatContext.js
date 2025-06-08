@@ -1,158 +1,241 @@
+/**
+ * Sohbet Bağlamı (Chat Context)
+ * Bu dosya, uygulama genelinde sohbet işlemlerini yönetmek için React Context API'sini kullanır.
+ * 
+ * Kullanılan teknolojiler:
+ * - React Context API: Global state yönetimi için
+ * - Socket.IO-client: Gerçek zamanlı mesajlaşma için
+ * - AsyncStorage: Yerel depolama için
+ * 
+ * İşlevler:
+ * - Mesaj gönderme ve alma
+ * - Sohbet geçmişini yönetme
+ * - Çevrimiçi kullanıcı durumlarını takip etme
+ * - Konuşma başlatma ve yönetme
+ */
+
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { db, storage } from '../services/firebase';
 import { AuthContext } from './AuthContext';
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  doc,
-  updateDoc,
-  serverTimestamp,
-  deleteDoc,
-  getDocs
-} from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import io from 'socket.io-client';
+
+// Sunucu IP'sini ayarlayın
+const SERVER_IP = '192.168.23.3'; // Yerel ağ IP'si
+const SERVER_PORT = 3000;
+const SERVER_URL = `http://${SERVER_IP}:${SERVER_PORT}`;
 
 export const ChatContext = createContext();
 
 export const ChatProvider = ({ children }) => {
   const { currentUser } = useContext(AuthContext);
+  const [socket, setSocket] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [users, setUsers] = useState([]);
 
-  // Konuşmaları dinle
   useEffect(() => {
-    if (!currentUser) return;
+    if (currentUser) {
+      console.log('Register isteği gönderiliyor, currentUser:', currentUser);
+      const newSocket = io(SERVER_URL, {
+        transports: ['websocket'],
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        query: {
+          userCode: currentUser.userCode,
+          deviceType: 'mobile'
+        }
+      });
 
-    const q = query(
-      collection(db, 'conversations'),
-      where('participants', 'array-contains', currentUser.uid),
-      orderBy('lastMessageTime', 'desc')
-    );
+      newSocket.on('connect', () => {
+        console.log('Socket bağlantısı kuruldu');
+        setSocket(newSocket);
+        
+        // Bağlantı kurulduğunda kullanıcı kaydını yap
+        newSocket.emit('register', {
+          userCode: currentUser.userCode,
+          deviceType: 'mobile'
+        });
+      });
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const conversationsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setConversations(conversationsData);
-    });
+      newSocket.on('disconnect', () => {
+        console.log('Socket bağlantısı kapatıldı.');
+        setSocket(null);
+      });
 
-    return () => unsubscribe();
+      newSocket.on('error', (error) => {
+        console.error('Socket hatası:', error);
+      });
+
+      newSocket.on('registered', (userData) => {
+        console.log('Kullanıcı kaydı başarılı:', userData);
+        // Kayıt başarılı olduktan sonra konuşmaları getir
+        newSocket.emit('getConversations');
+      });
+
+      newSocket.on('conversations', (conversations) => {
+        console.log('Konuşmalar alındı:', conversations);
+        if (Array.isArray(conversations)) {
+          setConversations(conversations);
+        } else {
+          console.error('Geçersiz konuşma formatı:', conversations);
+        }
+      });
+
+      // Yeni konuşma olayı
+      newSocket.on('newConversation', (newConversation) => {
+        console.log('Yeni konuşma alındı:', newConversation);
+        if (newConversation && newConversation.id) {
+          setConversations(prevConversations => {
+            const conversationExists = prevConversations.some(conv => conv.id === newConversation.id);
+            if (!conversationExists) {
+              return [...prevConversations, newConversation];
+            }
+            return prevConversations;
+          });
+        } else {
+          console.error('Geçersiz yeni konuşma formatı:', newConversation);
+        }
+      });
+
+      // Konuşma güncelleme olayı
+      newSocket.on('conversationUpdated', (updatedConversation) => {
+        console.log('Konuşma güncellendi:', updatedConversation);
+        if (updatedConversation && updatedConversation.id) {
+          setConversations(prevConversations => {
+            return prevConversations.map(conv => 
+              conv.id === updatedConversation.id ? updatedConversation : conv
+            );
+          });
+        } else {
+          console.error('Geçersiz güncellenmiş konuşma formatı:', updatedConversation);
+        }
+      });
+
+      newSocket.on('messages', (messages) => {
+        console.log('Mesajlar alındı:', messages);
+        if (Array.isArray(messages)) {
+          setMessages(messages);
+        } else if (messages && Array.isArray(messages.messages)) {
+          setMessages(messages.messages);
+        } else {
+          console.error('Geçersiz mesaj formatı:', messages);
+        }
+      });
+
+      newSocket.on('newMessage', (message) => {
+        console.log('Yeni mesaj alındı:', message);
+        if (message && message.id) {
+          setMessages(prevMessages => {
+            const messageExists = prevMessages.some(m => m.id === message.id);
+            if (!messageExists) {
+              const updatedMessages = [...prevMessages, message];
+              console.log('Güncellenmiş mesajlar:', updatedMessages);
+              return updatedMessages;
+            }
+            return prevMessages;
+          });
+        } else {
+          console.error('Geçersiz mesaj formatı:', message);
+        }
+      });
+
+      newSocket.on('userList', (users) => {
+        console.log('Kullanıcı listesi güncellendi:', users);
+        setUsers(users);
+      });
+
+      // Odaya katılma olayını dinle
+      newSocket.on('joinedConversation', (data) => {
+        console.log('Odaya katıldı:', data);
+        if (data && data.conversationId) {
+          newSocket.emit('getMessages', { conversationId: data.conversationId });
+        }
+      });
+
+      // Mesajları getirme olayını dinle
+      newSocket.on('getMessages', (data) => {
+        console.log('Mesajlar getirildi:', data);
+        if (data && Array.isArray(data.messages)) {
+          setMessages(data.messages);
+        } else if (data && Array.isArray(data)) {
+          setMessages(data);
+        } else {
+          console.error('Geçersiz getMessages formatı:', data);
+        }
+      });
+
+      return () => {
+        if (newSocket) {
+          newSocket.disconnect();
+        }
+      };
+    }
   }, [currentUser]);
 
-  // Aktif sohbetin mesajlarını dinle
+  // Konuşmaları yükle
   useEffect(() => {
-    if (!activeChat) return;
+    if (socket && currentUser) {
+      socket.emit('getConversations');
+      console.log('Konuşmalar yükleniyor...');
+    }
+  }, [socket, currentUser]);
 
-    const q = query(
-      collection(db, 'messages'),
-      where('conversationId', '==', activeChat),
-      orderBy('timestamp', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const messagesData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setMessages(messagesData);
-    });
-
-    return () => unsubscribe();
-  }, [activeChat]);
+  // Aktif sohbet değiştiğinde mesajları yükle
+  useEffect(() => {
+    if (socket && activeChat) {
+      console.log('Aktif sohbet değişti, mesajlar yükleniyor:', activeChat);
+      socket.emit('getMessages', { conversationId: activeChat });
+    }
+  }, [socket, activeChat]);
 
   const startConversation = async (userCode, messageMode = 'permanent') => {
     try {
-      if (!currentUser) {
-        throw new Error('Oturum açmanız gerekiyor');
+      if (!socket) {
+        throw new Error('Bağlantı kurulamadı');
       }
 
-      // Kullanıcıyı kodu ile bul
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('userCode', '==', userCode));
-      const querySnapshot = await getDocs(q);
-      
-      if (querySnapshot.empty) {
-        throw new Error('Kullanıcı bulunamadı');
+      if (!userCode) {
+        throw new Error('Kullanıcı kodu gerekli');
       }
 
-      const targetUser = querySnapshot.docs[0].data();
+      console.log('Sohbet başlatma isteği gönderiliyor:', { userCode, messageMode });
       
-      // Test için kendisiyle sohbet başlatma engelini kaldırdık
-      // if (targetUser.uid === currentUser.uid) {
-      //   throw new Error('Kendinizle sohbet başlatamazsınız');
-      // }
-      
-      // Konuşma zaten var mı kontrol et
-      const conversationsRef = collection(db, 'conversations');
-      const conversationQuery = query(
-        conversationsRef,
-        where('participants', '==', [currentUser.uid, targetUser.uid].sort())
-      );
-      
-      const existingConversation = await getDocs(conversationQuery);
-      
-      if (!existingConversation.empty) {
-        return existingConversation.docs[0].id;
-      }
-
-      // Yeni konuşma oluştur
-      const newConversation = await addDoc(conversationsRef, {
-        participants: [currentUser.uid, targetUser.uid].sort(),
-        createdAt: serverTimestamp(),
-        lastMessageTime: serverTimestamp(),
-        messageMode,
-        lastMessage: 'Yeni bir sohbet başlatıldı',
-        userName: targetUser.userName || targetUser.userCode,
-        userId: targetUser.uid,
-        userCode: targetUser.userCode
+      return new Promise((resolve, reject) => {
+        socket.emit('startConversation', { 
+          userCode: userCode.toUpperCase(), 
+          messageMode 
+        }, (response) => {
+          console.log('Sohbet başlatma yanıtı:', response);
+          if (response.error) {
+            console.error('Sohbet başlatma hatası:', response.error);
+            reject(new Error(response.error));
+          } else {
+            console.log('Sohbet başarıyla başlatıldı:', response.conversationId);
+            resolve(response.conversationId);
+          }
+        });
       });
-
-      return newConversation.id;
     } catch (error) {
       console.error('Sohbet başlatma hatası:', error);
       throw error;
     }
   };
 
-  const sendMessage = async (conversationId, content, type = 'text', file = null) => {
+  const sendMessage = async (conversationId, content, type = 'text') => {
     try {
-      if (!currentUser) {
-        throw new Error('Oturum açmanız gerekiyor');
+      if (!socket) {
+        throw new Error('Bağlantı kurulamadı');
       }
 
-      let fileUrl = null;
-      
-      if (file) {
-        const storageRef = ref(storage, `messages/${conversationId}/${Date.now()}_${file.name}`);
-        await uploadBytes(storageRef, file);
-        fileUrl = await getDownloadURL(storageRef);
-      }
-
-      const messageData = {
+      socket.emit('sendMessage', {
         conversationId,
-        senderId: currentUser.uid,
         content,
-        type,
-        fileUrl,
-        timestamp: serverTimestamp(),
-        read: false
-      };
-
-      const messageRef = await addDoc(collection(db, 'messages'), messageData);
-      
-      // Konuşmayı güncelle
-      await updateDoc(doc(db, 'conversations', conversationId), {
-        lastMessage: content,
-        lastMessageTime: serverTimestamp()
+        type
       });
-
-      return messageRef.id;
+      // Mesaj gönderildikten sonra aktif sohbetin mesajlarını yeniden çek
+      console.log('Mesaj gönderildi, aktif sohbet mesajları yenileniyor...');
+      socket.emit('getMessages', { conversationId: activeChat });
     } catch (error) {
       console.error('Mesaj gönderme hatası:', error);
       throw error;
@@ -161,7 +244,11 @@ export const ChatProvider = ({ children }) => {
 
   const deleteMessage = async (messageId) => {
     try {
-      await deleteDoc(doc(db, 'messages', messageId));
+      if (!socket) {
+        throw new Error('Bağlantı kurulamadı');
+      }
+
+      socket.emit('deleteMessage', { messageId });
     } catch (error) {
       throw error;
     }
@@ -174,7 +261,8 @@ export const ChatProvider = ({ children }) => {
     setActiveChat,
     startConversation,
     sendMessage,
-    deleteMessage
+    deleteMessage,
+    users
   };
 
   return (

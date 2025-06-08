@@ -2,7 +2,6 @@ package expo.modules.kotlin.types
 
 import com.facebook.react.bridge.Dynamic
 import com.facebook.react.bridge.ReadableArray
-import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.exception.CollectionElementCastException
 import expo.modules.kotlin.exception.exceptionDecorator
 import expo.modules.kotlin.jni.CppType
@@ -28,32 +27,32 @@ class PairTypeConverter(
     )
   )
 
-  override fun convertFromDynamic(value: Dynamic, context: AppContext?): Pair<*, *> {
+  override fun convertFromDynamic(value: Dynamic): Pair<*, *> {
     val jsArray = value.asArray()
-    return convertFromReadableArray(jsArray, context)
+    return convertFromReadableArray(jsArray)
   }
 
-  override fun convertFromAny(value: Any, context: AppContext?): Pair<*, *> {
+  override fun convertFromAny(value: Any): Pair<*, *> {
     if (value is ReadableArray) {
-      return convertFromReadableArray(value, context)
+      return convertFromReadableArray(value)
     }
 
     return value as Pair<*, *>
   }
 
-  private fun convertFromReadableArray(jsArray: ReadableArray, context: AppContext?): Pair<*, *> {
+  private fun convertFromReadableArray(jsArray: ReadableArray): Pair<*, *> {
     return Pair(
-      convertElement(context, jsArray, 0),
-      convertElement(context, jsArray, 1)
+      convertElement(jsArray, 0),
+      convertElement(jsArray, 1)
     )
   }
 
-  private fun convertElement(context: AppContext?, array: ReadableArray, index: Int): Any? {
+  private fun convertElement(array: ReadableArray, index: Int): Any? {
     return array.getDynamic(index).recycle {
       exceptionDecorator({ cause ->
         CollectionElementCastException(pairType, pairType.arguments[index].type!!, type, cause)
       }) {
-        converters[index].convert(this, context)
+        converters[index].convert(this)
       }
     }
   }

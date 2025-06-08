@@ -3,7 +3,6 @@ package expo.modules.kotlin.types
 import com.facebook.react.bridge.Dynamic
 import com.facebook.react.bridge.DynamicFromObject
 import com.facebook.react.bridge.ReadableMap
-import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.exception.CollectionElementCastException
 import expo.modules.kotlin.exception.exceptionDecorator
 import expo.modules.kotlin.jni.ExpectedType
@@ -26,12 +25,12 @@ class MapTypeConverter(
     }
   )
 
-  override fun convertFromDynamic(value: Dynamic, context: AppContext?): Map<*, *> {
+  override fun convertFromDynamic(value: Dynamic): Map<*, *> {
     val jsMap = value.asMap()
-    return convertFromReadableMap(jsMap, context)
+    return convertFromReadableMap(jsMap)
   }
 
-  override fun convertFromAny(value: Any, context: AppContext?): Map<*, *> {
+  override fun convertFromAny(value: Any): Map<*, *> {
     return if (valueConverter.isTrivial()) {
       value as Map<*, *>
     } else {
@@ -44,13 +43,13 @@ class MapTypeConverter(
             cause
           )
         }) {
-          valueConverter.convert(v, context)
+          valueConverter.convert(v)
         }
       }
     }
   }
 
-  private fun convertFromReadableMap(jsMap: ReadableMap, context: AppContext?): Map<*, *> {
+  private fun convertFromReadableMap(jsMap: ReadableMap): Map<*, *> {
     val result = mutableMapOf<String, Any?>()
 
     jsMap.entryIterator.forEach { (key, value) ->
@@ -58,7 +57,7 @@ class MapTypeConverter(
         exceptionDecorator({ cause ->
           CollectionElementCastException(mapType, mapType.arguments[1].type!!, type, cause)
         }) {
-          result[key] = valueConverter.convert(this, context)
+          result[key] = valueConverter.convert(this)
         }
       }
     }

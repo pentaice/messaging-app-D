@@ -7,8 +7,13 @@ const ChatList = ({ navigation }) => {
   const { conversations, setActiveChat } = useContext(ChatContext);
   const { currentUser } = useContext(AuthContext);
 
+  const filteredConversations = conversations.filter(conv => {
+    const participants = conv.participants || [];
+    return participants.includes(currentUser?.userCode);
+  });
+
   const renderItem = ({ item }) => {
-    const otherUser = item.participants.find(id => id !== currentUser.uid);
+    const otherUser = item.participants.find(id => id !== currentUser.userCode);
     
     return (
       <TouchableOpacity
@@ -29,7 +34,7 @@ const ChatList = ({ navigation }) => {
   return (
     <View style={styles.container}>
       <FlatList
-        data={conversations}
+        data={filteredConversations}
         renderItem={renderItem}
         keyExtractor={item => item.id}
         ListEmptyComponent={() => (

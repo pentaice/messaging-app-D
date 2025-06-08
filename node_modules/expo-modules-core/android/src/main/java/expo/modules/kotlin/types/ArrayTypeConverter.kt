@@ -1,7 +1,6 @@
 package expo.modules.kotlin.types
 
 import com.facebook.react.bridge.Dynamic
-import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.exception.CollectionElementCastException
 import expo.modules.kotlin.exception.exceptionDecorator
 import expo.modules.kotlin.jni.ExpectedType
@@ -19,7 +18,7 @@ class ArrayTypeConverter(
     }
   )
 
-  override fun convertFromDynamic(value: Dynamic, context: AppContext?): Array<*> {
+  override fun convertFromDynamic(value: Dynamic): Array<*> {
     val jsArray = value.asArray()
     val array = createTypedArray(jsArray.size())
     for (i in 0 until jsArray.size()) {
@@ -29,14 +28,14 @@ class ArrayTypeConverter(
           exceptionDecorator({ cause ->
             CollectionElementCastException(arrayType, arrayType.arguments.first().type!!, type, cause)
           }) {
-            arrayElementConverter.convert(this, context)
+            arrayElementConverter.convert(this)
           }
         }
     }
     return array
   }
 
-  override fun convertFromAny(value: Any, context: AppContext?): Array<*> {
+  override fun convertFromAny(value: Any): Array<*> {
     return if (arrayElementConverter.isTrivial()) {
       value as Array<*>
     } else {
@@ -49,7 +48,7 @@ class ArrayTypeConverter(
             cause
           )
         }) {
-          arrayElementConverter.convert(it, context)
+          arrayElementConverter.convert(it)
         }
       }.toTypedArray()
     }
@@ -69,8 +68,7 @@ class ArrayTypeConverter(
     ) as Array<Any?>
   }
 
-  override fun getCppRequiredTypes(): ExpectedType =
-    ExpectedType.forPrimitiveArray(arrayElementConverter.getCppRequiredTypes())
+  override fun getCppRequiredTypes(): ExpectedType = ExpectedType.forPrimitiveArray(arrayElementConverter.getCppRequiredTypes())
 
   override fun isTrivial() = arrayElementConverter.isTrivial()
 }

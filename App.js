@@ -1,3 +1,13 @@
+/**
+ * Ana uygulama bileşeni
+ * Bu dosya, React Native uygulamasının ana giriş noktasıdır.
+ * 
+ * Kullanılan teknolojiler:
+ * - React Native: Mobil uygulama geliştirme için
+ * - Expo: Geliştirme ve test ortamı için
+ * - React Navigation: Sayfa yönlendirmeleri için
+ */
+
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { AuthProvider } from './src/context/AuthContext';

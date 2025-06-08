@@ -9,5 +9,4 @@ typedef enum {
   EXTaskLaunchReasonLocation,
   EXTaskLaunchReasonNewsstandDownloads,
   EXTaskLaunchReasonRemoteNotification,
-  EXTaskLaunchReasonBackgroundTask,
 } EXTaskLaunchReason;

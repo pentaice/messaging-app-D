@@ -35,15 +35,23 @@ const HomeScreen = ({ navigation }) => {
   }, [navigation, currentUser]);
 
   const handleStartConversation = async () => {
+    console.log('handleStartConversation çağrıldı');
     if (userCode.length >= 6) {
+      console.log('userCode geçerli, sohbet başlatma isteği gönderiliyor...');
+      const upperCaseUserCode = userCode.toUpperCase();
       try {
-        const conversationId = await startConversation(userCode, messageMode);
+        const conversationId = await startConversation(upperCaseUserCode, messageMode);
+        console.log('startConversation tamamlandı, conversationId:', conversationId);
         setModalVisible(false);
         setUserCode('');
+        console.log(`Chat ekranına yönlendiriliyor: ${conversationId}`);
         navigation.navigate('Chat', { conversationId });
       } catch (error) {
+        console.error('handleStartConversation hata yakalandı:', error.message);
         alert(error.message);
       }
+    } else {
+      console.log('userCode geçerli değil:', userCode);
     }
   };
 
